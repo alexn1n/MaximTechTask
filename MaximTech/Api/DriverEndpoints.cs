@@ -1,82 +1,101 @@
 using MaximTech.Algorithms;
 using MaximTech.Domain;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
 
 namespace MaximTech.Api;
 
 public static class DriverEndpoints
 {
+    private const string InvalidCoordinates = "Координаты некорректны";
+    private const string CellOccupied = "Здесь уже находится другой водитель";
+    private const string NoDrivers = "Свободных водителей нет";
+
     private static readonly Lock LocatorLock = new();
 
-    public static IServiceCollection AddDriverLocator(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddDriverServices(this IServiceCollection services, IConfiguration configuration)
     {
-        var map = configuration.GetSection("DriverMap");
-        var locator = DriverLocatorFactory.Create(
-            map.GetValue("Algorithm", LocatorAlgorithm.GridSpiral),
-            map.GetValue("Width", 1000),
-            map.GetValue("Height", 1000));
+        var map = configuration.GetSection("MapSettings");
+        services.AddSingleton<IDriverLocator>(new GridSpiralLocator(map.GetValue<int>("N"), map.GetValue<int>("M")));
 
-        return services.AddSingleton(locator);
+        services.AddHttpClient<RandomNumberClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://www.randomnumberapi.com/");
+            client.Timeout = TimeSpan.FromSeconds(3);
+        });
+
+        return services;
     }
 
     public static IEndpointRouteBuilder MapDriverEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPut("/drivers/{id:int}", UpdateLocation).WithName("UpdateDriverLocation");
-        app.MapGet("/drivers/nearest", FindNearest).WithName("FindNearestDrivers");
+        app.MapPost("/drivers", UpdateDriver).WithName("UpdateDriver");
+        app.MapPost("/orders", AssignDriver).WithName("AssignDriver");
         return app;
     }
 
-    private static Results<NoContent, ValidationProblem, Conflict<ProblemDetails>> UpdateLocation(
-        int id, DriverLocationRequest request, IDriverLocator locator)
+    private static Results<Ok<MessageResponse>, BadRequest<MessageResponse>, Conflict<MessageResponse>> UpdateDriver(
+        DriverRequest request, IDriverLocator locator, ILoggerFactory loggerFactory)
     {
-        if (!IsInside(locator, request.X, request.Y))
-            return OutOfMap(locator);
+        var logger = loggerFactory.CreateLogger(typeof(DriverEndpoints));
+        var location = new Point(request.X, request.Y);
 
+        if (!locator.IsInside(location))
+        {
+            bool removed;
+            lock (LocatorLock)
+                removed = locator.Remove(request.Id);
+
+            logger.LogWarning("Водитель {DriverId}: некорректные координаты {Location}, прежние координаты удалены: {Removed}",
+                request.Id, location, removed);
+            return TypedResults.BadRequest(new MessageResponse(InvalidCoordinates));
+        }
+
+        bool added;
         try
         {
             lock (LocatorLock)
-                locator.AddOrUpdate(id, new Point(request.X, request.Y));
+                added = locator.AddOrUpdate(request.Id, location);
         }
-        catch (InvalidOperationException e)
+        catch (InvalidOperationException)
         {
-            return TypedResults.Conflict(new ProblemDetails
-            {
-                Title = "Клетка уже занята",
-                Detail = e.Message,
-                Status = StatusCodes.Status409Conflict
-            });
+            logger.LogWarning("Водитель {DriverId}: клетка {Location} занята", request.Id, location);
+            return TypedResults.Conflict(new MessageResponse(CellOccupied));
         }
 
-        return TypedResults.NoContent();
+        logger.LogInformation("Водитель {DriverId}: координаты {Location} {Action}",
+            request.Id, location, added ? "добавлены" : "изменены");
+        return TypedResults.Ok(new MessageResponse(added ? "Координаты успешно добавлены" : "Координаты успешно изменены"));
     }
 
-    private static Results<Ok<NearestDriverResponse[]>, ValidationProblem> FindNearest(
-        int x, int y, IDriverLocator locator)
+    private static async Task<Results<Ok<OrderResponse>, BadRequest<MessageResponse>, NotFound<MessageResponse>>> AssignDriver(
+        OrderRequest request, IDriverLocator locator, RandomNumberClient randomNumbers, ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
     {
-        if (!IsInside(locator, x, y))
-            return OutOfMap(locator);
+        var logger = loggerFactory.CreateLogger(typeof(DriverEndpoints));
+        var order = new Point(request.X, request.Y);
 
-        var order = new Point(x, y);
-        IReadOnlyList<Driver> drivers;
-        lock (LocatorLock)
-            drivers = locator.FindNearest(order);
-
-        var nearest = drivers
-            .Select(d => new NearestDriverResponse(
-                d.Id, d.Location.X, d.Location.Y, Math.Sqrt(Point.DistanceSquared(order, d.Location))))
-            .ToArray();
-
-        return TypedResults.Ok(nearest);
-    }
-
-    private static bool IsInside(IDriverLocator locator, int x, int y) =>
-        (uint)x < (uint)locator.Width && (uint)y < (uint)locator.Height;
-
-    private static ValidationProblem OutOfMap(IDriverLocator locator) =>
-        TypedResults.ValidationProblem(new Dictionary<string, string[]>
+        if (!locator.IsInside(order))
         {
-            ["x"] = [$"Допустимо 0 <= X < {locator.Width}."],
-            ["y"] = [$"Допустимо 0 <= Y < {locator.Height}."]
-        });
+            logger.LogWarning("Заказ {OrderId}: некорректные координаты {Location}", request.Id, order);
+            return TypedResults.BadRequest(new MessageResponse(InvalidCoordinates));
+        }
+
+        IReadOnlyList<Driver> nearest;
+        lock (LocatorLock)
+            nearest = locator.FindNearest(order);
+
+        if (nearest.Count == 0)
+        {
+            logger.LogWarning("Заказ {OrderId}: свободных водителей нет", request.Id);
+            return TypedResults.NotFound(new MessageResponse(NoDrivers));
+        }
+
+        var number = await randomNumbers.NextAsync(1, nearest.Count, cancellationToken);
+        var driver = nearest[number - 1];
+        var route = DriverRoute.Build(driver.Location, order);
+
+        logger.LogInformation("Заказ {OrderId}: назначен водитель {DriverId} ({Number} из {Count}), маршрут {Length}",
+            request.Id, driver.Id, number, nearest.Count, route.Count - 1);
+        return TypedResults.Ok(new OrderResponse(driver.Id, driver.Location, route.Count - 1, route));
+    }
 }

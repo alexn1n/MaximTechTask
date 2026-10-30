@@ -79,16 +79,33 @@ public class DriverLocatorTests(LocatorAlgorithm algorithm)
     public void AddOrUpdate_MovedDriver_FoundAtNewLocation()
     {
         var locator = Create(10, 10);
-        locator.AddOrUpdate(1, new Point(0, 0));
-        locator.AddOrUpdate(2, new Point(5, 5));
+        Assert.That(locator.AddOrUpdate(1, new Point(0, 0)), Is.True);
+        Assert.That(locator.AddOrUpdate(2, new Point(5, 5)), Is.True);
         locator.FindNearest(new Point(0, 0));
 
-        locator.AddOrUpdate(2, new Point(1, 0));
-        locator.AddOrUpdate(1, new Point(9, 9));
+        Assert.That(locator.AddOrUpdate(2, new Point(1, 0)), Is.False);
+        Assert.That(locator.AddOrUpdate(1, new Point(9, 9)), Is.False);
 
         var result = locator.FindNearest(new Point(0, 0));
 
         Assert.That(result, Is.EqualTo(new[] { new Driver(2, new Point(1, 0)), new Driver(1, new Point(9, 9)) }));
+    }
+
+    [Test]
+    public void Remove_RemovedDriver_NotFoundAndCellFreed()
+    {
+        var locator = Create(10, 10);
+        locator.AddOrUpdate(1, new Point(0, 0));
+        locator.AddOrUpdate(2, new Point(5, 5));
+        locator.FindNearest(new Point(0, 0));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(locator.Remove(1), Is.True);
+            Assert.That(locator.Remove(1), Is.False);
+            Assert.That(locator.FindNearest(new Point(0, 0)).Select(d => d.Id), Is.EqualTo(new[] { 2 }));
+            Assert.That(locator.IsOccupied(new Point(0, 0)), Is.False);
+        });
     }
 
     [Test]
