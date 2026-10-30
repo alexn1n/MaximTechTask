@@ -1,20 +1,22 @@
 @MaximTech_HostAddress = http://localhost:5282
 
-PUT {{MaximTech_HostAddress}}/drivers/1
+POST {{MaximTech_HostAddress}}/drivers
 Content-Type: application/json
 
-{ "x": 10, "y": 20 }
+{ "id": 1, "x": 10, "y": 20 }
 
 ###
 
-PUT {{MaximTech_HostAddress}}/drivers/2
+POST {{MaximTech_HostAddress}}/drivers
 Content-Type: application/json
 
-{ "x": 12, "y": 18 }
+{ "id": 2, "x": 12, "y": 18 }
 
 ###
 
-GET {{MaximTech_HostAddress}}/drivers/nearest?x=11&y=19
-Accept: application/json
+POST {{MaximTech_HostAddress}}/orders
+Content-Type: application/json
+
+{ "id": 100, "x": 11, "y": 19 }
 
 ###

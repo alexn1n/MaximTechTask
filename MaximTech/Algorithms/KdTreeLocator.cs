@@ -24,6 +24,8 @@ public sealed class KdTreeLocator(int width, int height) : DriverLocatorBase(wid
 
     protected override void OnMoved(int driverId, Point from, Point to) => _isDirty = true;
 
+    protected override void OnRemoved(int driverId, Point location) => _isDirty = true;
+
     private void Rebuild()
     {
         var nodes = new Driver[Count];

@@ -10,7 +10,11 @@ public interface IDriverLocator
 
     int Count { get; }
 
-    void AddOrUpdate(int driverId, Point location);
+    bool AddOrUpdate(int driverId, Point location);
+
+    bool Remove(int driverId);
+
+    bool IsInside(Point location);
 
     bool IsOccupied(Point location);
 

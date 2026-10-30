@@ -25,14 +25,14 @@ public abstract class DriverLocatorBase : IDriverLocator
 
     protected Dictionary<int, Point> Locations => _locations;
 
-    public void AddOrUpdate(int driverId, Point location)
+    public bool AddOrUpdate(int driverId, Point location)
     {
         EnsureInside(location);
 
         if (_occupants.TryGetValue(location, out var occupant))
         {
             if (occupant == driverId)
-                return;
+                return false;
 
             throw new InvalidOperationException($"Клетка {location} уже занята водителем {occupant}.");
         }
@@ -43,14 +43,26 @@ public abstract class DriverLocatorBase : IDriverLocator
             _occupants.Add(location, driverId);
             _locations[driverId] = location;
             OnMoved(driverId, previous, location);
+            return false;
         }
-        else
-        {
-            _occupants.Add(location, driverId);
-            _locations.Add(driverId, location);
-            OnAdded(driverId, location);
-        }
+
+        _occupants.Add(location, driverId);
+        _locations.Add(driverId, location);
+        OnAdded(driverId, location);
+        return true;
     }
+
+    public bool Remove(int driverId)
+    {
+        if (!_locations.Remove(driverId, out var location))
+            return false;
+
+        _occupants.Remove(location);
+        OnRemoved(driverId, location);
+        return true;
+    }
+
+    public bool IsInside(Point location) => (uint)location.X < (uint)Width && (uint)location.Y < (uint)Height;
 
     public bool IsOccupied(Point location) => _occupants.ContainsKey(location);
 
@@ -75,9 +87,13 @@ public abstract class DriverLocatorBase : IDriverLocator
     {
     }
 
+    protected virtual void OnRemoved(int driverId, Point location)
+    {
+    }
+
     private void EnsureInside(Point point)
     {
-        if ((uint)point.X >= (uint)Width || (uint)point.Y >= (uint)Height)
+        if (!IsInside(point))
             throw new ArgumentOutOfRangeException(nameof(point), point,
                 $"Координаты должны удовлетворять 0 <= X < {Width}, 0 <= Y < {Height}.");
     }
