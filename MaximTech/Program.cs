@@ -3,14 +3,15 @@ using MaximTech.Api;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
-builder.Services.AddDriverLocator(builder.Configuration);
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.RespectRequiredConstructorParameters = true);
+builder.Services.AddDriverServices(builder.Configuration);
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+app.UseMiddleware<ParallelLimitMiddleware>();
+
+app.MapOpenApi();
+app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "MaximTech"));
 
 app.UseHttpsRedirection();
 

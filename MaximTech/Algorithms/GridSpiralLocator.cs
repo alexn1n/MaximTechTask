@@ -41,6 +41,8 @@ public sealed class GridSpiralLocator : DriverLocatorBase
         Occupy(to, driverId);
     }
 
+    protected override void OnRemoved(int driverId, Point location) => _occupied[IndexOf(location.X, location.Y)] = false;
+
     private int ScanRing(Point order, int radius, NearestCollector collector)
     {
         if (radius == 0)
